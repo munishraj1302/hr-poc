@@ -1,0 +1,13 @@
+{
+  "Attorney": {"department_hints": ["Legal"], "title_hints": ["Attorney", "Associate"]},
+  "Partner": {"department_hints": ["Legal"], "title_hints": ["Partner"]},
+  "Paralegal": {"department_hints": ["Legal"], "title_hints": ["Paralegal"]},
+  "Legal Secretary": {"department_hints": ["Legal"], "title_hints": ["Secretary", "Assistant"]},
+  "HR": {"department_hints": ["HR", "Human Resources"], "title_hints": ["HR"]},
+  "Finance": {"department_hints": ["Finance"], "title_hints": ["Finance", "Accountant"]},
+  "IT Administrator": {"department_hints": ["IT"], "title_hints": ["Administrator", "Engineer"]},
+  "Help Desk": {"department_hints": ["IT"], "title_hints": ["Help Desk", "Support"]},
+  "Compliance Officer": {"department_hints": ["Compliance"], "title_hints": ["Compliance"]},
+  "Marketing": {"department_hints": ["Marketing"], "title_hints": ["Marketing"]},
+  "Receptionist": {"department_hints": ["Admin"], "title_hints": ["Receptionist", "Front Desk"]}
+}

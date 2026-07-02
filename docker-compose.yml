@@ -1,0 +1,45 @@
+version: "3.9"
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: poc
+      POSTGRES_PASSWORD: poc
+      POSTGRES_DB: onboarding_poc
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  mock_hrms:
+    build: ./mock_hrms
+    ports:
+      - "9000:9000"
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql://poc:poc@postgres:5432/onboarding_poc
+      MOCK_HRMS_URL: http://mock_hrms:9000
+      OLLAMA_URL: http://host.docker.internal:11434
+      OLLAMA_MODEL: gpt-oss:120b-cloud
+      JWT_SECRET: poc-dev-secret-change-me
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - mock_hrms
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  frontend:
+    build: ./frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:

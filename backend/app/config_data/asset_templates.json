@@ -1,0 +1,13 @@
+{
+  "Attorney": ["Laptop", "Dual Monitor", "Dock", "Headset", "Mobile Device"],
+  "Partner": ["Laptop", "Dual Monitor", "Dock", "Headset", "Mobile Device"],
+  "Paralegal": ["Laptop", "Monitor", "Headset"],
+  "Legal Secretary": ["Laptop", "Monitor"],
+  "HR": ["Laptop", "Monitor"],
+  "Finance": ["Laptop", "Monitor"],
+  "IT Administrator": ["Laptop", "Admin Workstation", "Security Token"],
+  "Help Desk": ["Laptop", "Security Token"],
+  "Compliance Officer": ["Laptop", "Monitor"],
+  "Marketing": ["Laptop", "Monitor"],
+  "Receptionist": ["Laptop"]
+}

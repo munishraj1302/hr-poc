@@ -1,0 +1,13 @@
+{
+  "Attorney": ["Department Group", "Office Group", "Practice Group"],
+  "Partner": ["Department Group", "Office Group", "Practice Group", "Admin Groups"],
+  "Paralegal": ["Department Group", "Office Group", "Practice Group"],
+  "Legal Secretary": ["Department Group", "Office Group"],
+  "HR": ["Department Group", "Office Group", "HR Groups"],
+  "Finance": ["Department Group", "Office Group", "Finance Groups"],
+  "IT Administrator": ["Department Group", "Office Group", "Admin Groups"],
+  "Help Desk": ["Department Group", "Office Group"],
+  "Compliance Officer": ["Department Group", "Office Group", "Admin Groups"],
+  "Marketing": ["Department Group", "Office Group"],
+  "Receptionist": ["Department Group", "Office Group"]
+}

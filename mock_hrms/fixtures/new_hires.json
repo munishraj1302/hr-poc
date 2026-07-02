@@ -1,0 +1,35 @@
+[
+  {
+    "hrms_employee_id": "EMP-1001",
+    "full_name": "Ananya Sharma",
+    "work_email": "ananya.sharma@example.com",
+    "department": "Legal",
+    "job_title": "Senior Attorney",
+    "location": "New York",
+    "manager_name": "David Klein",
+    "start_date": "2026-07-10",
+    "synced": false
+  },
+  {
+    "hrms_employee_id": "EMP-1002",
+    "full_name": "Rohan Mehta",
+    "work_email": "rohan.mehta@example.com",
+    "department": "Finance",
+    "job_title": "Financial Analyst",
+    "location": "Chennai",
+    "manager_name": "Priya Nair",
+    "start_date": "2026-07-08",
+    "synced": true
+  },
+  {
+    "hrms_employee_id": "EMP-1003",
+    "full_name": "Karthik Subramaniam",
+    "work_email": "karthik.s@example.com",
+    "department": "IT",
+    "job_title": "IT Administrator",
+    "location": "Bengaluru",
+    "manager_name": "Divya Rao",
+    "start_date": "2026-07-09",
+    "synced": false
+  }
+]

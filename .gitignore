@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.Python
+*.egg-info/
+.venv/
+venv/
+
+# SQLite local dev DB
+backend/poc_local.db
+
+# Generated reports (don't commit PDFs)
+backend/app/reports/*.pdf
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# Env files -- never commit real secrets
+.env
+backend/.env
+frontend/.env.local
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Docker
+*.log

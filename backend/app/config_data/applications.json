@@ -1,0 +1,13 @@
+{
+  "Attorney": ["Outlook", "Teams", "SharePoint", "OneDrive", "iManage", "Intapp", "Time Entry System"],
+  "Partner": ["Outlook", "Teams", "SharePoint", "OneDrive", "iManage", "Intapp", "Time Entry System", "Billing System"],
+  "Paralegal": ["Outlook", "Teams", "SharePoint", "OneDrive", "iManage"],
+  "Legal Secretary": ["Outlook", "Teams", "SharePoint", "OneDrive"],
+  "HR": ["Outlook", "Teams", "SharePoint", "HR Portal"],
+  "Finance": ["Outlook", "Teams", "SharePoint", "ERP", "Billing System"],
+  "IT Administrator": ["Outlook", "Teams", "SharePoint", "OneDrive", "ERP"],
+  "Help Desk": ["Outlook", "Teams", "SharePoint"],
+  "Compliance Officer": ["Outlook", "Teams", "SharePoint", "HR Portal"],
+  "Marketing": ["Outlook", "Teams", "SharePoint", "OneDrive"],
+  "Receptionist": ["Outlook", "Teams"]
+}
