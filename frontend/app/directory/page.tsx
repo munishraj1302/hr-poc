@@ -1,8 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
+import { useAuth } from "../../lib/useAuth";
 
 export default function DirectoryPage() {
+  const { role, logout } = useAuth();
   const [employees, setEmployees] = useState<any[]>([]);
   const [syncing, setSyncing] = useState(false);
 
@@ -26,7 +28,11 @@ export default function DirectoryPage() {
 
   return (
     <main style={{ padding: 32 }}>
-      <h1>Employee Directory</h1>
+      <div style={{ display: "flex", justifyContent: "space-between" }}>
+        <h1>Employee Directory</h1>
+        <div>Logged in as {role} <button onClick={logout}>Log out</button></div>
+      </div>
+
       <button onClick={handleSync} disabled={syncing}>
         {syncing ? "Syncing..." : "Sync from HRMS"}
       </button>

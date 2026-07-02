@@ -1,14 +1,34 @@
-// Single place all screens call through -- keeps the API base URL and
-// fetch error handling consistent across every page.
+// frontend/lib/api.js
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+// --- token storage ---
+export function setToken(token, role) {
+  localStorage.setItem("access_token", token);
+  localStorage.setItem("user_role", role);
+}
+export function getToken() {
+  return typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+}
+export function getRole() {
+  return typeof window !== "undefined" ? localStorage.getItem("user_role") : null;
+}
+export function clearToken() {
+  localStorage.removeItem("access_token");
+  localStorage.removeItem("user_role");
+}
+
 async function request(path, options = {}) {
+  const token = getToken();
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     ...options,
   });
   if (!res.ok) {
     const body = await res.text();
+    if (res.status === 401) clearToken(); // token expired/invalid -- force re-login
     throw new Error(`API error ${res.status}: ${body}`);
   }
   return res.json();
