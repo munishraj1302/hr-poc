@@ -3,21 +3,35 @@ Shared completion-percentage calculation -- used by both the Employee
 Profile endpoint and the Employee Directory listing, so they can never
 show two different numbers for the same employee again.
 
-Step count is imported from onboarding_orchestrator.STEPS, not
-re-declared here -- this was the root cause of the original bug
-(a hardcoded count of 8 that didn't match what the orchestrator
-actually marked as complete).
+REDEFINED: previously counted tracker steps being GENERATED (a step
+marked "completed" the moment tasks existed, regardless of approval
+state) -- this drifted out of sync with the Tracker's live track_status,
+which reflects real approval progress. Now both use the same underlying
+definition: 2 pipeline stages (Registered, Validation) + 4 tracks, where
+each track contributes its FRACTIONAL approval progress (see
+track_status.get_track_completion_fraction), not a binary generated/not.
 """
 from sqlalchemy.orm import Session
 from app.models import OnboardingTracker
-from app.orchestrators.onboarding_orchestrator import STEPS
+from app.services.track_status import TRACKS, get_track_completion_fraction
 
-ONBOARDING_STEP_COUNT = len(STEPS)
+PIPELINE_STAGES = ["Registered", "Validation"]
+TOTAL_UNITS = len(PIPELINE_STAGES) + len(TRACKS)  # 2 + 4 = 6
+
+
+def _stage_completed(db: Session, employee_id: str, step: str) -> bool:
+    return db.query(OnboardingTracker).filter(
+        OnboardingTracker.employee_id == employee_id,
+        OnboardingTracker.step == step,
+        OnboardingTracker.status == "completed",
+    ).first() is not None
 
 
 def get_onboarding_completion_pct(db: Session, employee_id: str) -> int:
-    steps = db.query(OnboardingTracker).filter(
-        OnboardingTracker.employee_id == employee_id, OnboardingTracker.status == "completed"
-    ).all()
-    completed = len({s.step for s in steps})
-    return round((completed / ONBOARDING_STEP_COUNT) * 100) if steps else 0
+    stage_credit = sum(1.0 for step in PIPELINE_STAGES if _stage_completed(db, employee_id, step))
+    track_credit = sum(get_track_completion_fraction(db, employee_id, track) for track in TRACKS)
+
+    total_credit = stage_credit + track_credit
+    if total_credit == 0:
+        return 0
+    return round((total_credit / TOTAL_UNITS) * 100)

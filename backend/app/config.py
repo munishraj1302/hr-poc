@@ -36,3 +36,11 @@ def get_compliance_templates():
 
 def get_risk_factors():
     return _load("risk_factors.json")
+
+
+def get_required_documents():
+    return _load("required_documents.json")
+
+
+def get_projects():
+    return _load("projects.json")

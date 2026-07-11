@@ -5,27 +5,40 @@ Employee schema. This is the module that gets swapped when a real HRMS
 field mapping change, nothing downstream.
 """
 import os
+import json
 import requests
 from sqlalchemy.orm import Session
 from app.models import Employee
 from app.schemas.employee import EmployeeCreate
+from app.services.experience import derive_experience_level
 
 HRMS_URL = os.getenv("MOCK_HRMS_URL", "http://localhost:9000")
 
 
 def _map_new_hire(record: dict) -> EmployeeCreate:
     """Maps mock-HRMS field names onto our Employee schema.
-    Swap this mapping when pointing at a real HRMS export."""
+    Swap this mapping when pointing at a real HRMS export.
+
+    role: HRMS sends this directly now (the role the candidate applied
+    for/was hired as) -- AI role classification only runs as a fallback
+    if this is missing or invalid, see onboarding_orchestrator._resolve_role.
+
+    experience_level: from HRMS directly if provided, else derived from
+    years_of_experience if HRMS sends that instead."""
     return EmployeeCreate(
         name=record["full_name"],
         employee_id=record["hrms_employee_id"],
         email=record["work_email"],
         department=record["department"],
         title=record.get("job_title"),
+        role=record.get("role"),
+        experience_level=record.get("experience_level"),
+        years_of_experience=record.get("years_of_experience"),
         office=record.get("location"),
         manager=record.get("manager_name"),
         joining_date=record.get("start_date"),
         sync_source="hrms",
+        documents_submitted=record.get("documents_submitted", []),
     )
 
 
@@ -40,7 +53,15 @@ def pull_new_hires(db: Session) -> list[Employee]:
         exists = db.query(Employee).filter(Employee.employee_id == mapped.employee_id).first()
         if exists:
             continue
-        employee = Employee(**mapped.model_dump())
+        employee_kwargs = mapped.model_dump()
+        docs = employee_kwargs.pop("documents_submitted", None)
+        employee_kwargs["documents_submitted"] = json.dumps(docs) if docs is not None else None
+        years_exp = employee_kwargs.pop("years_of_experience", None)
+        employee_kwargs["experience_level"] = derive_experience_level(
+            title=employee_kwargs.get("title"), years_of_experience=years_exp,
+            explicit=employee_kwargs.get("experience_level"),
+        )
+        employee = Employee(**employee_kwargs)
         db.add(employee)
         db.commit()
         db.refresh(employee)

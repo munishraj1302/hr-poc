@@ -3,7 +3,7 @@ Core SQLAlchemy models. Matches the schema in POC_Technical_Architecture.md sect
 """
 import datetime
 import uuid
-from sqlalchemy import Column, String, DateTime, Float, ForeignKey, Text
+from sqlalchemy import Column, String, DateTime, Float, ForeignKey, Text, Boolean
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -21,12 +21,14 @@ class Employee(Base):
     email = Column(String, nullable=False)
     department = Column(String, nullable=False)
     title = Column(String, nullable=True)
-    role = Column(String, nullable=True)          # confirmed role, set after classification
+    role = Column(String, nullable=True)          # from HRMS directly if provided; AI classifier is fallback-only (see role_classifier usage in orchestrator)
+    experience_level = Column(String, nullable=True)  # "fresher" | "experienced" -- from HRMS if provided, else derived; stored (not recomputed) so any agent can read it directly
     office = Column(String, nullable=True)
     manager = Column(String, nullable=True)
     joining_date = Column(String, nullable=True)
     sync_source = Column(String, default="manual")  # "manual" | "hrms"
-    status = Column(String, default="registered")   # registered -> onboarding -> active -> offboarding -> exited
+    status = Column(String, default="registered")   # registered -> documents_pending -> onboarding -> active -> offboarding -> exited
+    documents_submitted = Column(Text, nullable=True)  # JSON-encoded list, as reported by HRMS/manual entry at registration time
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
@@ -134,6 +136,47 @@ class Report(Base):
     report_type = Column(String, nullable=False)  # onboarding | offboarding
     file_path = Column(String, nullable=False)
     generated_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class EmployeeDocument(Base):
+    """Tracks each required document's status for one employee. Rows are
+    created when Validation first runs and finds a document missing --
+    documents the employee already had at registration never get a row
+    here (they're just implicitly satisfied), only the gaps are tracked."""
+    __tablename__ = "employee_documents"
+
+    id = Column(String, primary_key=True, default=gen_id)
+    employee_id = Column(String, ForeignKey("employees.id"), nullable=False)
+    document_name = Column(String, nullable=False)
+    status = Column(String, default="pending")  # pending | received
+    requested_at = Column(DateTime, default=datetime.datetime.utcnow)
+    received_at = Column(DateTime, nullable=True)
+
+
+class OnboardingTask(Base):
+    """One row per task per track (HR/IT/Security/Manager). This is the
+    single source of truth both the Onboarding Tracker (read-only display)
+    and the Approval Dashboard (the only place status changes) read from.
+
+    status is now an APPROVAL state, not a completion state:
+    pending | approved | rejected. The Approval Dashboard is the only
+    writer; the Tracker only ever reads. Track/employee completion is
+    computed live from these rows (see services/track_status.py), never
+    cached, to avoid the class of bug where a stored percentage drifts
+    out of sync with the real data.
+    """
+    __tablename__ = "onboarding_tasks"
+
+    id = Column(String, primary_key=True, default=gen_id)
+    employee_id = Column(String, ForeignKey("employees.id"), nullable=False)
+    track = Column(String, nullable=False)  # HR | IT | Security | Manager
+    task_name = Column(String, nullable=False)
+    status = Column(String, default="pending")  # pending | approved | rejected
+    is_mandatory = Column(Boolean, default=True)  # non-mandatory tasks (e.g. Team Introduction) don't block track completion
+    is_ai_generated = Column(String, default="false")  # "true"/"false" -- whether AI produced the content for this task
+    ai_recommendation = Column(Text, nullable=True)  # AI reasoning/output shown alongside the task, if any
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    decided_at = Column(DateTime, nullable=True)
 
 
 class AuditLog(Base):

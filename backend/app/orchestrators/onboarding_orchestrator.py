@@ -1,39 +1,48 @@
 """
-Owns the onboarding step sequence. Writes a tracker row after every step
-so the frontend can poll GET /onboarding/{id}/status and drive the
-Onboarding Tracker UI without knowing anything about agents internally.
+Owns the onboarding step sequence.
 
-Step names are defined ONCE as constants below -- STEPS is derived from
-them, and every other module that needs the step count or step names
-(services/progress.py, routers/approvals.py) imports from here instead
-of hardcoding its own copy. This is the fix for the completion-percentage
-bug where the step count drifted out of sync with the actual step list.
+Registered -> Validation (can pause on missing documents, no email --
+email drafting was removed; HR just sees document status directly and
+marks received) -> Role Classification (FALLBACK ONLY -- skipped
+entirely if HRMS already provided a valid role) -> fans out into FOUR
+PARALLEL TRACKS (HR, IT, Security, Manager), each populated with
+OnboardingTask rows.
+
+Approval now happens PER TASK, in the Approval Dashboard only -- this
+orchestrator never marks a task "approved," it only creates tasks in
+"pending" status. Track and employee completion are computed live from
+task state (see services/track_status.py), never stored here.
 """
 import json
+import datetime
 from sqlalchemy.orm import Session
 from app.models import (
     Employee, OnboardingTracker, RoleClassification, AccessRecommendation,
-    AssetAllocation, ComplianceTask, Approval, AuditLog,
+    AssetAllocation, ComplianceTask, AuditLog,
+    EmployeeDocument, OnboardingTask,
 )
 from app.agents.role_classifier import classify_role
 from app.agents.access_recommender import recommend_access
 from app.agents.hardware_recommender import recommend_hardware
 from app.agents.compliance_recommender import recommend_compliance
-from app.constants import APPROVER_ROLES
+from app.agents.project_recommender_agent import recommend_projects
+from app.agents.privileged_access_agent import review_privileged_access
+from app.agents.team_intro_agent import draft_team_intro
+from app.config import get_required_documents, get_roles
 
 STEP_REGISTERED = "Registered"
 STEP_VALIDATION = "Validation"
-STEP_ROLE_CLASSIFICATION = "Role Classification"
-STEP_ACCESS_RECOMMENDATION = "Access Recommendation"
-STEP_ASSET_ALLOCATION = "Asset Allocation"
-STEP_COMPLIANCE = "Compliance"
-STEP_MANAGER_APPROVAL = "Manager Approval"
-STEP_IT_APPROVAL = "IT Approval"
+STEP_HR_TRACK = "HR Track"
+STEP_IT_TRACK = "IT Track"
+STEP_SECURITY_TRACK = "Security Track"
+STEP_MANAGER_TRACK = "Manager Track"
 
 STEPS = [
-    STEP_REGISTERED, STEP_VALIDATION, STEP_ROLE_CLASSIFICATION, STEP_ACCESS_RECOMMENDATION,
-    STEP_ASSET_ALLOCATION, STEP_COMPLIANCE, STEP_MANAGER_APPROVAL, STEP_IT_APPROVAL,
+    STEP_REGISTERED, STEP_VALIDATION,
+    STEP_HR_TRACK, STEP_IT_TRACK, STEP_SECURITY_TRACK, STEP_MANAGER_TRACK,
 ]
+
+STATUS_BLOCKED = "blocked"  # tracker status meaning "paused pending employee action"
 
 
 def _mark(db: Session, employee_id: str, step: str, status: str):
@@ -46,13 +55,24 @@ def _audit(db: Session, employee_id: str, agent: str, action: str, detail: str =
     db.commit()
 
 
-def _validate(employee: Employee) -> tuple[bool, str]:
-    """Rule-based validation -- no Ollama needed for mandatory-field checks."""
-    if not employee.name or not employee.employee_id or not employee.email:
-        return False, "Missing mandatory field(s)."
-    if not employee.department:
-        return False, "Missing department."
-    return True, "All mandatory fields present."
+def _add_task(db: Session, employee_id: str, track: str, task_name: str,
+               is_mandatory: bool = True, is_ai_generated: bool = False, ai_recommendation: str = None):
+    """Every task starts 'pending' -- the Approval Dashboard is the only
+    place status ever changes, per the architecture change. Nothing here
+    auto-approves anything, even the AI-generated ones."""
+    db.add(OnboardingTask(
+        employee_id=employee_id, track=track, task_name=task_name, status="pending",
+        is_mandatory=is_mandatory,
+        is_ai_generated="true" if is_ai_generated else "false",
+        ai_recommendation=ai_recommendation,
+    ))
+    db.commit()
+
+
+def _check_missing_documents(employee: Employee) -> list[str]:
+    required = get_required_documents()
+    submitted = json.loads(employee.documents_submitted) if employee.documents_submitted else []
+    return [d for d in required if d not in submitted]
 
 
 def run_onboarding(db: Session, employee_id: str):
@@ -61,65 +81,179 @@ def run_onboarding(db: Session, employee_id: str):
         raise ValueError(f"Employee {employee_id} not found")
 
     _mark(db, employee_id, STEP_REGISTERED, "completed")
-
-    # 1. Validation (rule-based)
     _mark(db, employee_id, STEP_VALIDATION, "running")
-    is_valid, reason = _validate(employee)
-    _mark(db, employee_id, STEP_VALIDATION, "completed" if is_valid else "failed")
-    _audit(db, employee_id, "Validation Agent", "Employee validated" if is_valid else "Validation failed", reason)
-    if not is_valid:
-        return {"status": "failed", "reason": reason}
 
-    # 2. Role Classification (Ollama, with fallback)
-    _mark(db, employee_id, STEP_ROLE_CLASSIFICATION, "running")
+    if not employee.name or not employee.employee_id or not employee.email or not employee.department:
+        _mark(db, employee_id, STEP_VALIDATION, "failed")
+        _audit(db, employee_id, "Validation Agent", "Validation failed", "Missing mandatory field(s).")
+        return {"status": "failed", "reason": "Missing mandatory field(s)."}
+
+    missing_docs = _check_missing_documents(employee)
+    if missing_docs:
+        for doc_name in missing_docs:
+            existing = db.query(EmployeeDocument).filter(
+                EmployeeDocument.employee_id == employee_id, EmployeeDocument.document_name == doc_name
+            ).first()
+            if not existing:
+                db.add(EmployeeDocument(employee_id=employee_id, document_name=doc_name, status="pending"))
+        db.commit()
+
+        _mark(db, employee_id, STEP_VALIDATION, STATUS_BLOCKED)
+        _audit(db, employee_id, "Validation Agent", "Blocked -- missing documents",
+               f"Missing: {', '.join(missing_docs)}. HR can review status and mark received once provided.")
+
+        employee.status = "documents_pending"
+        db.commit()
+        return {"status": "awaiting_documents", "missing_documents": missing_docs}
+
+    _mark(db, employee_id, STEP_VALIDATION, "completed")
+    _audit(db, employee_id, "Validation Agent", "Employee validated", "All mandatory fields and documents present.")
+    return _continue_after_validation(db, employee)
+
+
+def _resolve_role(db: Session, employee: Employee):
+    """Role comes from HRMS directly whenever possible. The AI classifier
+    is FALLBACK ONLY -- invoked solely when HRMS didn't provide a role,
+    the role is empty, or it doesn't match a supported role."""
+    valid_roles = set(get_roles().keys())
+
+    if employee.role and employee.role in valid_roles:
+        _audit(db, employee.id, "Role Agent", f"{employee.role} provided by HRMS",
+               "Role came directly from HRMS; AI classification skipped.")
+        return
+
+    reason = "No role provided by HRMS." if not employee.role else f"HRMS role '{employee.role}' is not a supported role."
     classification = classify_role(employee.department, employee.title, employee.office)
     employee.role = classification["role"]
     db.add(RoleClassification(
-        employee_id=employee_id,
-        predicted_role=classification["role"],
+        employee_id=employee.id, predicted_role=classification["role"],
         confidence=classification.get("confidence", 0.0),
-        reasoning=classification.get("reasoning", ""),
+        reasoning=f"{reason} Fallback classification: {classification.get('reasoning', '')}",
     ))
     db.commit()
-    _mark(db, employee_id, STEP_ROLE_CLASSIFICATION, "completed")
-    _audit(db, employee_id, "Role Agent", f"{classification['role']} detected", classification.get("reasoning", ""))
+    _audit(db, employee.id, "Role Agent", f"{classification['role']} detected (fallback)",
+           f"{reason} {classification.get('reasoning', '')}")
 
-    # 3. Access Recommendation (config-driven + Ollama reasoning)
-    _mark(db, employee_id, STEP_ACCESS_RECOMMENDATION, "running")
+
+def _continue_after_validation(db: Session, employee: Employee):
+    """Resolve role (HRMS-first, AI fallback), then fan out into the 4
+    parallel tracks. Every task is created 'pending' -- nothing here
+    approves anything; that only happens in the Approval Dashboard."""
+    employee_id = employee.id
+
+    _resolve_role(db, employee)
+    db.commit()
+
+    is_fresher = employee.experience_level == "fresher"
+
     access = recommend_access(employee.role)
     db.add(AccessRecommendation(
-        employee_id=employee_id,
-        applications=json.dumps(access["applications"]),
+        employee_id=employee_id, applications=json.dumps(access["applications"]),
         security_groups=json.dumps(access["security_groups"]),
-        ethical_wall_rules=json.dumps(access["ethical_wall_rules"]),
-        reasoning=access["reasoning"],
+        ethical_wall_rules=json.dumps(access["ethical_wall_rules"]), reasoning=access["reasoning"],
     ))
     db.commit()
-    _mark(db, employee_id, STEP_ACCESS_RECOMMENDATION, "completed")
-    _audit(db, employee_id, "Access Agent", "Applications assigned", access["reasoning"])
 
-    # 4. Asset Allocation (config-driven)
-    _mark(db, employee_id, STEP_ASSET_ALLOCATION, "running")
     hardware = recommend_hardware(employee.role)
     db.add(AssetAllocation(employee_id=employee_id, asset_list=json.dumps(hardware["asset_list"])))
     db.commit()
-    _mark(db, employee_id, STEP_ASSET_ALLOCATION, "completed")
 
-    # 5. Compliance (config-driven)
-    _mark(db, employee_id, STEP_COMPLIANCE, "running")
-    tasks = recommend_compliance(employee.role)
-    for task_name in tasks:
+    compliance_items = recommend_compliance(employee.role)
+    for task_name in compliance_items:
         db.add(ComplianceTask(employee_id=employee_id, task_name=task_name))
     db.commit()
-    _mark(db, employee_id, STEP_COMPLIANCE, "completed")
 
-    # 6. Create approval records (pending -- resolved via /approvals endpoint,
-    # which is also what writes the Manager/IT Approval tracker steps once decided)
-    for approver_role in APPROVER_ROLES:
-        db.add(Approval(employee_id=employee_id, workflow_type="onboarding", approver_role=approver_role))
-    db.commit()
+    # --- HR track ---
+    _mark(db, employee_id, STEP_HR_TRACK, "running")
+    _add_task(db, employee_id, "HR", "Verify Documents", is_ai_generated=True,
+              ai_recommendation="All required documents confirmed present at validation.")
+    _add_task(db, employee_id, "HR", "Compliance Checklist", is_ai_generated=True,
+              ai_recommendation=f"Recommended tasks based on role '{employee.role}': {', '.join(compliance_items)}")
+    _add_task(db, employee_id, "HR", "Complete Documentation")
+    if is_fresher:
+        _add_task(db, employee_id, "HR", "Additional Learning Modules", is_mandatory=False, is_ai_generated=True,
+                  ai_recommendation="Recommended for fresher hires -- supplementary learning content beyond standard compliance.")
+    _mark(db, employee_id, STEP_HR_TRACK, "completed")
+    _audit(db, employee_id, "HR Track", "Task list generated", "Tasks created for HR")
+
+    # --- IT track ---
+    _mark(db, employee_id, STEP_IT_TRACK, "running")
+    _add_task(db, employee_id, "IT", "Create User Account")
+    _add_task(db, employee_id, "IT", "Assign Applications", is_ai_generated=True, ai_recommendation=access["reasoning"])
+    _add_task(db, employee_id, "IT", "Asset Allocation", is_ai_generated=True,
+              ai_recommendation=f"Recommended assets for '{employee.role}': {', '.join(hardware['asset_list'])}")
+    _mark(db, employee_id, STEP_IT_TRACK, "completed")
+    _audit(db, employee_id, "IT Track", "Task list generated", "Tasks created for IT")
+
+    # --- Security track ---
+    _mark(db, employee_id, STEP_SECURITY_TRACK, "running")
+    _add_task(db, employee_id, "Security", "Assign Security Groups", is_ai_generated=True, ai_recommendation=access["reasoning"])
+    if access["ethical_wall_rules"]:
+        ethical_wall_note = (f"Legal role -- allowed: {access['ethical_wall_rules']['allowed']}, "
+                              f"restricted: {access['ethical_wall_rules']['restricted']}")
+    else:
+        ethical_wall_note = "Not applicable -- non-legal role."
+    _add_task(db, employee_id, "Security", "Ethical Wall Assignment", is_ai_generated=True, ai_recommendation=ethical_wall_note)
+    privileged_review = review_privileged_access(employee.role, access["security_groups"])
+    _add_task(db, employee_id, "Security", "Privileged Access Review", is_ai_generated=True,
+              ai_recommendation=privileged_review["reasoning"])
+    _mark(db, employee_id, STEP_SECURITY_TRACK, "completed")
+    _audit(db, employee_id, "Security Track", "Task list generated", "Tasks created for Security")
+
+    # --- Manager track ---
+    _mark(db, employee_id, STEP_MANAGER_TRACK, "running")
+
+    projects = recommend_projects(employee.role, employee.department, employee.experience_level)
+    project_lines = [f"{r['project']}: {r['reasoning']}" for r in projects["recommendations"]]
+    _add_task(db, employee_id, "Manager", "Project Recommendation", is_ai_generated=True,
+              ai_recommendation=" | ".join(project_lines))
+
+    induction_note = f"Suggested induction date: {employee.joining_date or 'TBD'} (employee's joining date)."
+    _add_task(db, employee_id, "Manager", "Schedule Induction", is_ai_generated=True, ai_recommendation=induction_note)
+
+    if is_fresher:
+        _add_task(db, employee_id, "Manager", "Mandatory Induction Session", is_ai_generated=True,
+                  ai_recommendation="Required for fresher hires -- structured onboarding session before independent work begins.")
+
+    intro = draft_team_intro(employee.name, employee.role, employee.department, employee.joining_date)
+    _add_task(db, employee_id, "Manager", "Team Introduction", is_mandatory=False, is_ai_generated=True,
+              ai_recommendation=intro["intro_text"])
+
+    _mark(db, employee_id, STEP_MANAGER_TRACK, "completed")
+    _audit(db, employee_id, "Manager Track", "Task list generated", "Tasks created for Manager")
 
     employee.status = "onboarding"
     db.commit()
 
     return {"status": "in_progress", "role": employee.role}
+
+
+def resume_after_documents(db: Session, employee_id: str):
+    """HR confirms documents were received -- resumes a paused pipeline.
+    No email involved (that whole mechanic was removed); this is purely
+    a status check + resume."""
+    employee = db.query(Employee).filter(Employee.id == employee_id).first()
+    if not employee:
+        raise ValueError(f"Employee {employee_id} not found")
+
+    pending_docs = db.query(EmployeeDocument).filter(
+        EmployeeDocument.employee_id == employee_id, EmployeeDocument.status == "pending"
+    ).all()
+    if not pending_docs:
+        raise ValueError("No pending documents to mark as received for this employee")
+
+    for doc in pending_docs:
+        doc.status = "received"
+        doc.received_at = datetime.datetime.utcnow()
+    db.commit()
+
+    submitted = json.loads(employee.documents_submitted) if employee.documents_submitted else []
+    submitted.extend([d.document_name for d in pending_docs])
+    employee.documents_submitted = json.dumps(submitted)
+    db.commit()
+
+    _mark(db, employee_id, STEP_VALIDATION, "completed")
+    _audit(db, employee_id, "Validation Agent", "Documents received",
+           "Missing documents confirmed received; validation completed.")
+
+    return _continue_after_validation(db, employee)

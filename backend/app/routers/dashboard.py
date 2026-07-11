@@ -1,5 +1,16 @@
 """
 Executive Dashboard summary endpoint.
+
+FIX applied per the gap-check after the task-level-approval redesign:
+pending_approvals used to only count the Approval table, which now only
+gets rows for OFFBOARDING (onboarding approval moved to per-task
+OnboardingTask rows). Left as-is, this widget silently underused. Now
+counts both: pending onboarding tasks + pending offboarding approvals.
+
+NOTE: reconstructed from the version you confirmed working earlier
+(this file wasn't in my working copy -- only ever given to you as a
+code block). Sanity-check this against your actual current file before
+overwriting, in case you've made other tweaks since.
 """
 import datetime
 from fastapi import APIRouter, Depends
@@ -8,7 +19,7 @@ from sqlalchemy import func
 from app.database import get_db
 from app.models import (
     Employee, Approval, RiskAssessment, ComplianceTask,
-    OnboardingTracker, OffboardingTracker, AuditLog,
+    OnboardingTracker, OffboardingTracker, AuditLog, OnboardingTask,
 )
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
@@ -40,15 +51,19 @@ def get_dashboard_summary(db: Session = Depends(get_db)):
     total_employees = db.query(Employee).count()
     pending_onboarding = db.query(Employee).filter(Employee.status == "onboarding").count()
     pending_offboarding = db.query(Employee).filter(Employee.status == "offboarding").count()
-    pending_approvals = db.query(Approval).filter(Approval.status == "pending").count()
+
+    pending_onboarding_tasks = db.query(OnboardingTask).filter(OnboardingTask.status == "pending").count()
+    pending_offboarding_approvals = db.query(Approval).filter(
+        Approval.status == "pending", Approval.workflow_type == "offboarding"
+    ).count()
+    pending_approvals = pending_onboarding_tasks + pending_offboarding_approvals
+
     high_risk_employees = db.query(RiskAssessment).filter(RiskAssessment.risk_level == "High").count()
 
     total_tasks = db.query(ComplianceTask).count()
     completed_tasks = db.query(ComplianceTask).filter(ComplianceTask.status == "completed").count()
     compliance_completion_pct = round((completed_tasks / total_tasks * 100), 1) if total_tasks else 0.0
 
-    # Proxy for "onboarded/offboarded today" -- schema doesn't have a distinct
-    # "completed" timestamp yet, so this uses the first tracker step of each flow.
     onboarded_today = (
         db.query(OnboardingTracker)
         .filter(OnboardingTracker.step == "Registered", OnboardingTracker.status == "completed")

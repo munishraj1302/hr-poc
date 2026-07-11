@@ -1,0 +1,44 @@
+[
+  {
+    "name": "Pension Product Configurator",
+    "suited_roles": ["IT Administrator", "Finance", "Compliance Officer"],
+    "suited_experience": ["experienced"],
+    "skills": ["financial systems", "product configuration", "backend development"]
+  },
+  {
+    "name": "HR Automation",
+    "suited_roles": ["HR", "IT Administrator", "Help Desk"],
+    "suited_experience": ["fresher", "experienced"],
+    "skills": ["process automation", "HR systems", "scripting"]
+  },
+  {
+    "name": "Internal AI Assistant",
+    "suited_roles": ["IT Administrator", "Help Desk", "Marketing"],
+    "suited_experience": ["experienced"],
+    "skills": ["AI/ML", "backend development", "prompt engineering"]
+  },
+  {
+    "name": "Onboarding Buddy Program Pilot",
+    "suited_roles": ["HR", "Legal Secretary", "Receptionist"],
+    "suited_experience": ["fresher"],
+    "skills": ["communication", "process documentation"]
+  },
+  {
+    "name": "Client Matter Management Upgrade",
+    "suited_roles": ["Attorney", "Partner", "Paralegal"],
+    "suited_experience": ["experienced"],
+    "skills": ["legal research", "case management systems"]
+  },
+  {
+    "name": "New Hire Learning Portal",
+    "suited_roles": ["HR", "Marketing", "Receptionist", "Legal Secretary"],
+    "suited_experience": ["fresher"],
+    "skills": ["content creation", "training design"]
+  },
+  {
+    "name": "Security Access Audit Tool",
+    "suited_roles": ["IT Administrator", "Compliance Officer"],
+    "suited_experience": ["experienced"],
+    "skills": ["security", "auditing", "backend development"]
+  }
+]
