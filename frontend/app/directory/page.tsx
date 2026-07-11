@@ -17,6 +17,7 @@ export default function DirectoryPage() {
   const [roleFilter, setRoleFilter] = useState("");
   const [officeFilter, setOfficeFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [experienceFilter, setExperienceFilter] = useState("");
 
   async function load() {
     setEmployees(await api.listEmployees());
@@ -40,6 +41,7 @@ export default function DirectoryPage() {
   const roles = Array.from(new Set(employees.map((e) => e.role).filter(Boolean))).sort();
   const offices = Array.from(new Set(employees.map((e) => e.office).filter(Boolean))).sort();
   const statuses = Array.from(new Set(employees.map((e) => e.status))).sort();
+  const experienceLevels = Array.from(new Set(employees.map((e) => e.experience_level).filter(Boolean))).sort();
 
   const filtered = employees.filter((e) => {
     if (nameFilter && !e.name.toLowerCase().includes(nameFilter.toLowerCase())) return false;
@@ -48,6 +50,7 @@ export default function DirectoryPage() {
     if (roleFilter && e.role !== roleFilter) return false;
     if (officeFilter && e.office !== officeFilter) return false;
     if (statusFilter && e.status !== statusFilter) return false;
+    if (experienceFilter && e.experience_level !== experienceFilter) return false;
     return true;
   });
 
@@ -83,6 +86,10 @@ export default function DirectoryPage() {
             <option value="">All Statuses</option>
             {statuses.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
+          <select style={selectStyle} value={experienceFilter} onChange={(e) => setExperienceFilter(e.target.value)}>
+            <option value="">All Experience Levels</option>
+            {experienceLevels.map((exp) => <option key={exp} value={exp}>{exp}</option>)}
+          </select>
         </div>
 
         <p style={{ fontSize: 13, color: "#666" }}>{filtered.length} of {employees.length} employees</p>
@@ -90,7 +97,7 @@ export default function DirectoryPage() {
         <table style={{ borderCollapse: "collapse", width: "100%" }}>
           <thead>
             <tr style={{ textAlign: "left", borderBottom: "2px solid #eee" }}>
-              <th>Name</th><th>Department</th><th>Role</th><th>Manager</th>
+              <th>Name</th><th>Department</th><th>Role</th><th>Experience</th><th>Manager</th>
               <th>Status</th><th>Progress</th><th></th>
             </tr>
           </thead>
@@ -100,6 +107,17 @@ export default function DirectoryPage() {
                 <td style={{ padding: "8px 0" }}>{e.name}</td>
                 <td>{e.department}</td>
                 <td>{e.role || "—"}</td>
+                <td>
+                  {e.experience_level && (
+                    <span style={{
+                      fontSize: 11, padding: "2px 8px", borderRadius: 10,
+                      background: e.experience_level === "fresher" ? "#e0f2fe" : "#ede9fe",
+                      color: e.experience_level === "fresher" ? "#0369a1" : "#6d28d9",
+                    }}>
+                      {e.experience_level}
+                    </span>
+                  )}
+                </td>
                 <td>{e.manager || "—"}</td>
                 <td>{e.status}</td>
                 <td>{e.completion_pct}%</td>

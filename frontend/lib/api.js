@@ -1,4 +1,5 @@
-// frontend/lib/api.js
+// Single place all screens call through -- keeps the API base URL, auth
+// token attachment, and fetch error handling consistent across every page.
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 // --- token storage ---
@@ -39,11 +40,18 @@ export const api = {
     request("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
   listEmployees: () => request("/employees"),
   getEmployee: (id) => request(`/employees/${id}`),
+  getProfile: (id) => request(`/employees/${id}/profile`),
   createEmployee: (payload) =>
     request("/employees", { method: "POST", body: JSON.stringify(payload) }),
   syncHrmsNewHires: () => request("/hrms/sync/new-hires", { method: "POST" }),
   syncHrmsExits: () => request("/hrms/sync/exits", { method: "POST" }),
   onboardingStatus: (id) => request(`/onboarding/${id}/status`),
+  onboardingDocuments: (id) => request(`/onboarding/${id}/documents`),
+  markDocumentsReceived: (id) => request(`/onboarding/${id}/documents/mark-received`, { method: "POST" }),
+  onboardingTasks: (id) => request(`/onboarding/${id}/tasks`),
+  decideTask: (id, taskId, status) =>
+    request(`/onboarding/${id}/tasks/${taskId}/decide`, { method: "POST", body: JSON.stringify({ status }) }),
+  approvalsForRole: (role) => request(`/approvals/pending/${role}`),
   offboardingStatus: (id) => request(`/offboarding/${id}/status`),
   accessRecommendation: (id) => request(`/access/${id}/recommendation`),
   assets: (id) => request(`/assets/${id}`),
@@ -52,5 +60,4 @@ export const api = {
     request(`/approvals/${id}/${role}/decide`, { method: "POST", body: JSON.stringify({ status }) }),
   auditTrail: (id) => request(`/audit/${id}`),
   dashboardSummary: () => request("/dashboard/summary"),
-  getProfile: (id) => request(`/employees/${id}/profile`),
 };
