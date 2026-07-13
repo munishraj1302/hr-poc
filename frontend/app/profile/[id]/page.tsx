@@ -86,7 +86,7 @@ export default function ProfilePage() {
           <h3>Compliance</h3>
           {profile.compliance_tasks.map((t: any) => (
             <div key={t.task_name} style={{ fontSize: 14 }}>
-              {t.status === "completed" ? "✅" : "⬜"} {t.task_name}
+              {t.status === "approved" ? "✅" : t.status === "rejected" ? "❌" : "⬜"} {t.task_name}
             </div>
           ))}
         </div>

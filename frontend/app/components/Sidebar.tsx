@@ -1,10 +1,10 @@
 "use client";
- 
+
 import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "../../lib/useAuth";
- 
+
 const menu = [
   {
     href: "/dashboard",
@@ -34,8 +34,12 @@ const menu = [
     href: "/compliance",
     label: "Compliance Dashboard",
   },
+  { 
+    href: "/ai-insights",
+    label: "AI Insights" 
+  },
 ];
- 
+
 export default function Sidebar({
   children,
 }: {
@@ -43,10 +47,10 @@ export default function Sidebar({
 }) {
   const pathname = usePathname();
   const { role, logout } = useAuth();
- 
+
   return (
     <div className="bg-[#fafafa]">
- 
+
       {/* Fixed Sidebar */}
       <aside
         className="
@@ -68,12 +72,12 @@ export default function Sidebar({
           <p className="text-xs text-yellow-500 tracking-widest">
             PEOPLE OPERATIONS
           </p>
- 
+
           <h1 className="text-xl font-bold mt-2">
             HR Platform
           </h1>
         </div>
- 
+
         {/* Navigation */}
         <nav
           className="
@@ -96,10 +100,9 @@ export default function Sidebar({
                 mb-2
                 transition-colors
  
-                ${
-                  pathname === item.href
-                    ? "bg-[#243654] text-white"
-                    : "text-gray-300 hover:bg-[#243654] hover:text-white"
+                ${pathname === item.href
+                  ? "bg-[#243654] text-white"
+                  : "text-gray-300 hover:bg-[#243654] hover:text-white"
                 }
               `}
             >
@@ -107,17 +110,17 @@ export default function Sidebar({
             </Link>
           ))}
         </nav>
- 
+
         {/* Footer */}
         <div className="border-t border-gray-700 px-5 py-5">
- 
+
           <p className="text-sm text-gray-300 mb-3">
             Logged in as
             <span className="font-semibold text-white ml-1">
               {role}
             </span>
           </p>
- 
+
           <button
             onClick={logout}
             className="
@@ -135,10 +138,10 @@ export default function Sidebar({
           >
             Log out
           </button>
- 
+
         </div>
       </aside>
- 
+
       {/* Main Content */}
       <main
         className="
@@ -151,7 +154,7 @@ export default function Sidebar({
       >
         {children}
       </main>
- 
+
     </div>
   );
 }

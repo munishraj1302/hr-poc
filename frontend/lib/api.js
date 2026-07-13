@@ -51,7 +51,12 @@ export const api = {
   onboardingTasks: (id) => request(`/onboarding/${id}/tasks`),
   decideTask: (id, taskId, status) =>
     request(`/onboarding/${id}/tasks/${taskId}/decide`, { method: "POST", body: JSON.stringify({ status }) }),
+  updateTaskSelection: (id, taskId, selectedOptions) =>
+    request(`/onboarding/${id}/tasks/${taskId}/selection`, {
+      method: "PATCH", body: JSON.stringify({ selected_options: selectedOptions }),
+    }),
   approvalsForRole: (role) => request(`/approvals/pending/${role}`),
+  insightsSummary: () => request("/insights/summary"),
   offboardingStatus: (id) => request(`/offboarding/${id}/status`),
   accessRecommendation: (id) => request(`/access/${id}/recommendation`),
   assets: (id) => request(`/assets/${id}`),
