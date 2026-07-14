@@ -1,234 +1,394 @@
 "use client";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { api } from "../../lib/api";
 import { useAuth } from "../../lib/useAuth";
 import Sidebar from "../components/Sidebar";
 
-const STATUS_COLOR: Record<string, string> = {
-  completed: "#16a34a", running: "#eab308", waiting: "#9ca3af",
-  failed: "#dc2626", blocked: "#f97316",
-};
-const STATUS_LABEL: Record<string, string> = {
-  completed: "Completed", running: "Running", waiting: "Waiting",
-  failed: "Failed", blocked: "Blocked — awaiting employee documents",
-};
-const TASK_STATUS_ICON: Record<string, string> = {
-  approved: "✅", rejected: "❌", pending: "⬜",
-};
-const TRACK_STATUS_COLOR: Record<string, string> = {
-  completed: "#16a34a", in_progress: "#eab308", blocked: "#dc2626", not_started: "#9ca3af",
+const STATUS_STYLE: Record<string, { bg: string; color: string; label: string }> = {
+  onboarding: { bg: "#fef3c7", color: "#b45309", label: "Onboarding" },
+  documents_pending: { bg: "#dbeafe", color: "#1d4ed8", label: "Documents Pending" },
+  active: { bg: "#dcfce7", color: "#15803d", label: "Active" },
 };
 
-const TRACK_STEPS = ["HR Track", "IT Track", "Security Track", "Manager Track"];
-const STEP_TO_TRACK: Record<string, string> = {
-  "HR Track": "HR", "IT Track": "IT", "Security Track": "Security", "Manager Track": "Manager",
+const EXPERIENCE_STYLE: Record<string, { bg: string; color: string }> = {
+  experienced: { bg: "#ede9fe", color: "#6d28d9" },
+  fresher: { bg: "#dbeafe", color: "#1d4ed8" },
 };
 
-const POLL_INTERVAL_MS = 3000;
-
-function formatTime(ts: string) {
-  return new Date(ts).toLocaleTimeString();
+function initials(name: string) {
+  return name
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase())
+    .join("");
 }
 
-export default function OnboardingTrackerPage() {
+// Your API's field names for these two weren't confirmed, so try the
+// common variants in order and fall back gracefully. Once you tell me
+// the real key, this can collapse back to a single e.fieldName lookup.
+function getEmployeeCode(e: any): string {
+  return (
+    e.employeeId ??
+    e.employee_id ??
+    e.empId ??
+    e.emp_id ??
+    e.employeeCode ??
+    e.employee_code ??
+    e.code ??
+    e.id ??
+    "—"
+  );
+}
+
+function getExperience(e: any): string {
+  return (
+    e.experience ??
+    e.experienceLevel ??
+    e.experience_level ??
+    e.seniority ??
+    e.level ??
+    e.experienceType ??
+    ""
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const s = STATUS_STYLE[status] || { bg: "#f1f5f9", color: "#475569", label: status };
+  return (
+    <span
+      style={{
+        background: s.bg,
+        color: s.color,
+        fontSize: 12,
+        fontWeight: 600,
+        padding: "4px 10px",
+        borderRadius: 999,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {s.label}
+    </span>
+  );
+}
+
+function ExperienceBadge({ experience }: { experience: string }) {
+  if (!experience) {
+    return <span style={{ fontSize: 12, color: "#9ca3af" }}>—</span>;
+  }
+  const s = EXPERIENCE_STYLE[experience.toLowerCase()] || { bg: "#f1f5f9", color: "#475569" };
+  return (
+    <span
+      style={{
+        background: s.bg,
+        color: s.color,
+        fontSize: 12,
+        fontWeight: 600,
+        padding: "4px 12px",
+        borderRadius: 999,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {experience.toLowerCase()}
+    </span>
+  );
+}
+
+function ProgressBar({ value }: { value: number }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 110 }}>
+      <div style={{ flex: 1, height: 6, background: "#e5e7eb", borderRadius: 999, overflow: "hidden" }}>
+        <div
+          style={{
+            width: `${Math.min(100, Math.max(0, value))}%`,
+            height: "100%",
+            background: value >= 100 ? "#16a34a" : "#d97706",
+            borderRadius: 999,
+          }}
+        />
+      </div>
+      <span style={{ fontSize: 12, color: "#6b7280", width: 32, textAlign: "right" }}>{value}%</span>
+    </div>
+  );
+}
+
+const TRACKER_STEPS = ["Registered", "Validation", "HR Track", "IT Track", "Security Track", "Manager Track"];
+
+function computeProgress(steps: any[]): number {
+  if (!steps || steps.length === 0) return 0;
+  const latestByStep = new Map<string, any>();
+  steps.forEach((s) => latestByStep.set(s.step, s));
+  const completedCount = TRACKER_STEPS.filter((step) => latestByStep.get(step)?.status === "completed").length;
+  return Math.round((completedCount / TRACKER_STEPS.length) * 100);
+}
+
+export default function OnboardingTrackerDirectoryPage() {
   useAuth();
+  const router = useRouter();
   const [employees, setEmployees] = useState<any[]>([]);
-  const [selectedId, setSelectedId] = useState("");
-  const [rawSteps, setRawSteps] = useState<any[]>([]);
-  const [auditLog, setAuditLog] = useState<any[]>([]);
-  const [documentInfo, setDocumentInfo] = useState<any>(null);
-  const [tasksByTrack, setTasksByTrack] = useState<any>({});
-  const [trackStatus, setTrackStatus] = useState<any>({});
-  const [loading, setLoading] = useState(false);
-  const [expandedStep, setExpandedStep] = useState<string | null>(null);
-  const [resuming, setResuming] = useState(false);
-  const pollRef = useRef<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [department, setDepartment] = useState("all");
 
   useEffect(() => {
     loadEmployees();
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
 
+  const departments = useMemo(() => {
+    const unique = Array.from(new Set(employees.map((e: any) => e.department).filter(Boolean)));
+    return unique.sort();
+  }, [employees]);
+
   async function loadEmployees() {
+    setLoading(true);
     const all = await api.listEmployees();
     const relevant = all.filter((e: any) =>
       e.status === "onboarding" || e.status === "active" || e.status === "documents_pending"
     );
-    setEmployees(relevant);
-    if (relevant.length && !selectedId) setSelectedId(relevant[0].id);
+
+    const withProgress = await Promise.all(
+      relevant.map(async (e: any) => {
+        try {
+          const steps = await api.onboardingStatus(e.id);
+          return { ...e, progress: computeProgress(steps) };
+        } catch {
+          return { ...e, progress: 0 };
+        }
+      })
+    );
+
+    setEmployees(withProgress);
+    setLoading(false);
   }
 
-  useEffect(() => {
-    if (!selectedId) return;
-    loadTrackerData(true);
-    if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = setInterval(() => loadTrackerData(false), POLL_INTERVAL_MS);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [selectedId]);
-
-  async function loadTrackerData(showLoading: boolean) {
-    if (showLoading) { setLoading(true); setExpandedStep(null); }
-    const [steps, audit, docs, taskData] = await Promise.all([
-      api.onboardingStatus(selectedId),
-      api.auditTrail(selectedId),
-      api.onboardingDocuments(selectedId),
-      api.onboardingTasks(selectedId),
-    ]);
-    setRawSteps(steps);
-    setAuditLog(audit);
-    setDocumentInfo(docs);
-    setTasksByTrack(taskData.tasks || {});
-    setTrackStatus(taskData.track_status || {});
-    if (showLoading) setLoading(false);
-  }
-
-  async function handleMarkReceived() {
-    setResuming(true);
-    try {
-      await api.markDocumentsReceived(selectedId);
-      await loadTrackerData(true);
-      await loadEmployees();
-    } finally {
-      setResuming(false);
-    }
-  }
-
-  const latestByStep = new Map<string, any>();
-  rawSteps.forEach((s) => latestByStep.set(s.step, s));
-  const orderedSteps = Array.from(new Set(rawSteps.map((s) => s.step))).map((step) => latestByStep.get(step));
-
-  function getStepHistory(step: string) {
-    return rawSteps.filter((s) => s.step === step);
-  }
-
-  const pendingDocs = documentInfo?.documents?.filter((d: any) => d.status === "pending") || [];
-  const isBlocked = orderedSteps.some((s) => s.step === "Validation" && s.status === "blocked");
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return employees.filter((e: any) => {
+      const matchesDept = department === "all" || e.department === department;
+      const matchesSearch =
+        !q ||
+        [e.name, getEmployeeCode(e), e.department, getExperience(e)]
+          .filter(Boolean)
+          .some((v: string) => String(v).toLowerCase().includes(q));
+      return matchesDept && matchesSearch;
+    });
+  }, [employees, search, department]);
 
   return (
     <Sidebar>
-      <main style={{ padding: 32, flex: 1, maxWidth: 750 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <h1>Onboarding Tracker</h1>
-          <span style={{ fontSize: 12, color: "#999" }}>● live (read-only) — updates every {POLL_INTERVAL_MS / 1000}s</span>
+      <main style={{ padding: 32, flex: 1, maxWidth: 1160, background: "#fdfcfa" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: 1.5, color: "#d97706", textTransform: "uppercase" }}>
+              People Operations
+            </div>
+            <h1 style={{ margin: "6px 0 6px", fontSize: 40, fontWeight: 800, color: "#0f172a", letterSpacing: -0.5 }}>
+              Onboarding Tracker
+            </h1>
+            <p style={{ fontSize: 14, color: "#6b7280", marginTop: 0, marginBottom: 28 }}>
+              View onboarding progress by employee. Select View to see the full step-by-step tracker.
+            </p>
+          </div>
         </div>
-        <p style={{ fontSize: 12, color: "#999", marginTop: -8 }}>
-          Task approvals happen in the Approval Dashboard — this screen only displays progress.
-        </p>
 
-        <select value={selectedId} onChange={(e) => setSelectedId(e.target.value)} style={{ padding: 8, fontSize: 14, marginBottom: 24 }}>
-          {employees.map((e) => (
-            <option key={e.id} value={e.id}>{e.name} — {e.department} ({e.status})</option>
-          ))}
-        </select>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 16,
+            marginBottom: 24,
+          }}
+        >
+          <div
+            style={{
+              position: "relative",
+              flex: "1 1 auto",
+              background: "#fff",
+              border: "1px solid #eef0f2",
+              borderRadius: 14,
+              boxShadow: "0 1px 2px rgba(15,23,42,0.05)",
+            }}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="#9ca3af"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{
+                position: "absolute",
+                left: 18,
+                top: "50%",
+                transform: "translateY(-50%)",
+                pointerEvents: "none",
+              }}
+            >
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search employees..."
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                padding: "14px 16px 14px 44px",
+                fontSize: 14,
+                border: "none",
+                outline: "none",
+                background: "transparent",
+                borderRadius: 14,
+              }}
+            />
+          </div>
+          <select
+            value={department}
+            onChange={(e) => setDepartment(e.target.value)}
+            style={{
+              padding: "0 16px",
+              fontSize: 14,
+              border: "1px solid #eef0f2",
+              outline: "none",
+              background: "#fff",
+              borderRadius: 14,
+              width: 180,
+              height: 48,
+              flexShrink: 0,
+              color: department === "all" ? "#6b7280" : "#0f172a",
+              boxShadow: "0 1px 2px rgba(15,23,42,0.05)",
+            }}
+          >
+            <option value="all">All departments</option>
+            {departments.map((d) => (
+              <option key={d} value={d}>{d}</option>
+            ))}
+          </select>
+          <span
+            style={{
+              fontSize: 13,
+              fontWeight: 700,
+              background: "#fdf1d9",
+              color: "#92620f",
+              padding: "13px 22px",
+              borderRadius: 999,
+              whiteSpace: "nowrap",
+              flexShrink: 0,
+            }}
+          >
+            {filtered.length} Employee{filtered.length === 1 ? "" : "s"}
+          </span>
+        </div>
 
         {loading && <p>Loading...</p>}
 
-        {!loading && isBlocked && (
-          <div style={{ border: "1px solid #fdba74", background: "#fff7ed", borderRadius: 8, padding: 16, marginBottom: 24 }}>
-            <div style={{ fontWeight: 600, color: "#c2410c", marginBottom: 8 }}>
-              ⏸ Onboarding paused — missing documents
-            </div>
-            <div style={{ fontSize: 13, marginBottom: 12 }}>
-              Waiting on: {pendingDocs.map((d: any) => d.document_name).join(", ")}
-            </div>
-            <button onClick={handleMarkReceived} disabled={resuming}>
-              {resuming ? "Resuming..." : "Mark Documents Received & Resume"}
-            </button>
-          </div>
-        )}
-
-        {!loading && orderedSteps.length > 0 && (
-          <div>
-            {orderedSteps.map((s, i) => {
-              const isExpanded = expandedStep === s.step;
-              const history = getStepHistory(s.step);
-              const isTrackStep = TRACK_STEPS.includes(s.step);
-              const trackName = STEP_TO_TRACK[s.step];
-              const trackTasks = isTrackStep ? (tasksByTrack[trackName] || []) : [];
-              const liveTrackStatus = isTrackStep ? trackStatus[trackName] : null;
-              const validationAuditEntries = s.step === "Validation"
-                ? auditLog.filter((a: any) => a.agent === "Validation Agent")
-                : [];
-
-              return (
-                <div key={s.step}>
-                  <div
-                    onClick={() => setExpandedStep(isExpanded ? null : s.step)}
-                    style={{ display: "flex", alignItems: "flex-start", marginBottom: 4, cursor: "pointer" }}
-                  >
-                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginRight: 12 }}>
-                      <div style={{ width: 16, height: 16, borderRadius: 8, background: STATUS_COLOR[s.status] || "#ccc", flexShrink: 0 }} />
-                      {i < orderedSteps.length - 1 && <div style={{ width: 2, flex: 1, background: "#ddd", minHeight: isExpanded ? 8 : 28 }} />}
-                    </div>
-                    <div style={{ paddingBottom: 8 }}>
-                      <div style={{ fontWeight: 500 }}>
-                        {s.step} <span style={{ fontSize: 11, color: "#999" }}>{isExpanded ? "▲" : "▼"}</span>
-                        {isTrackStep && liveTrackStatus && (
-                          <span style={{ fontSize: 11, marginLeft: 6, color: TRACK_STATUS_COLOR[liveTrackStatus] }}>
-                            ({liveTrackStatus.replace("_", " ")})
-                          </span>
-                        )}
+        {!loading && (
+          <div
+            style={{
+              background: "#fff",
+              border: "1px solid #eef0f2",
+              borderRadius: 16,
+              boxShadow: "0 1px 3px rgba(15,23,42,0.06)",
+              overflow: "hidden",
+            }}
+          >
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+              <thead>
+                <tr style={{ background: "#f8f5ee", textAlign: "left" }}>
+                  <th style={thStyle}>Employee</th>
+                  <th style={thStyle}>Employee ID</th>
+                  <th style={thStyle}>Department</th>
+                  <th style={thStyle}>Experience</th>
+                  <th style={thStyle}>Status</th>
+                  <th style={thStyle}>Progress</th>
+                  <th style={{ ...thStyle, textAlign: "right" }}>Profile</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((e: any) => (
+                  <tr key={e.id} style={{ borderTop: "1px solid #f3f1ea" }}>
+                    <td style={tdStyle}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <div
+                          style={{
+                            width: 40,
+                            height: 40,
+                            borderRadius: "50%",
+                            background: "#0f172a",
+                            color: "#fff",
+                            fontSize: 13,
+                            fontWeight: 700,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            flexShrink: 0,
+                          }}
+                        >
+                          {initials(e.name || "?")}
+                        </div>
+                        <div style={{ fontWeight: 700, fontSize: 15, color: "#0f172a" }}>{e.name}</div>
                       </div>
-                      <div style={{ fontSize: 12, color: STATUS_COLOR[s.status] }}>{STATUS_LABEL[s.status] || s.status}</div>
-                    </div>
-                  </div>
-
-                  {isExpanded && (
-                    <div style={{ marginLeft: 28, marginBottom: 20, padding: "8px 12px", background: "#fafafa", border: "1px solid #eee", borderRadius: 6, fontSize: 13 }}>
-                      <div style={{ fontWeight: 500, marginBottom: 6 }}>Timeline</div>
-                      {history.map((h, idx) => (
-                        <div key={idx} style={{ color: "#555" }}>{STATUS_LABEL[h.status]} at {formatTime(h.timestamp)}</div>
-                      ))}
-
-                      {s.step === "Validation" && documentInfo?.documents?.length > 0 && (
-                        <>
-                          <div style={{ fontWeight: 500, marginTop: 10, marginBottom: 6 }}>Documents</div>
-                          {documentInfo.documents.map((d: any, idx: number) => (
-                            <div key={idx} style={{ color: d.status === "received" ? "#16a34a" : "#c2410c" }}>
-                              {d.status === "received" ? "✅" : "⏳"} {d.document_name} — {d.status}
-                            </div>
-                          ))}
-                        </>
-                      )}
-
-                      {s.step === "Validation" && validationAuditEntries.length > 0 && (
-                        <>
-                          <div style={{ fontWeight: 500, marginTop: 10, marginBottom: 6 }}>AI Reasoning</div>
-                          {validationAuditEntries.map((a: any, idx: number) => (
-                            <div key={idx} style={{ color: "#555", marginBottom: 4 }}><strong>{a.action}</strong> — {a.detail}</div>
-                          ))}
-                        </>
-                      )}
-
-                      {isTrackStep && (
-                        <>
-                          <div style={{ fontWeight: 500, marginTop: 10, marginBottom: 6 }}>{trackName} Tasks (read-only)</div>
-                          {trackTasks.length === 0 && <div style={{ color: "#999", fontStyle: "italic" }}>No tasks yet.</div>}
-                          {trackTasks.map((t: any, idx: number) => (
-                            <div key={idx} style={{ marginBottom: 10, paddingBottom: 8, borderBottom: idx < trackTasks.length - 1 ? "1px solid #eee" : "none" }}>
-                              <div>
-                                {TASK_STATUS_ICON[t.status]} {t.task_name}
-                                {!t.is_mandatory && <span style={{ fontSize: 11, color: "#999", marginLeft: 6 }}>(optional)</span>}
-                              </div>
-                              {t.ai_recommendation && (
-                                <div style={{ color: "#666", marginTop: 2, fontStyle: "italic" }}>
-                                  {t.is_ai_generated ? "🤖 " : ""}{t.ai_recommendation}
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                        </>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+                    </td>
+                    <td style={{ ...tdStyle, color: "#94a3b8", fontSize: 13 }}>{getEmployeeCode(e)}</td>
+                    <td style={tdStyle}>{e.department}</td>
+                    <td style={tdStyle}>
+                      <ExperienceBadge experience={getExperience(e)} />
+                    </td>
+                    <td style={tdStyle}>
+                      <StatusBadge status={e.status} />
+                    </td>
+                    <td style={tdStyle}>
+                      <ProgressBar value={e.progress ?? 0} />
+                    </td>
+                    <td style={{ ...tdStyle, textAlign: "right" }}>
+                      <button
+                        onClick={() => router.push(`/onboarding-tracker/${e.id}`)}
+                        style={{
+                          background: "#0f172a",
+                          color: "#fff",
+                          border: "none",
+                          borderRadius: 8,
+                          padding: "10px 20px",
+                          fontSize: 13,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                        }}
+                      >
+                        View
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={7} style={{ ...tdStyle, textAlign: "center", color: "#999" }}>
+                      No employees match your search.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         )}
-
-        {!loading && orderedSteps.length === 0 && <p>No onboarding activity for this employee yet.</p>}
       </main>
     </Sidebar>
   );
 }
+
+const thStyle: React.CSSProperties = {
+  padding: "14px 16px",
+  fontSize: 12,
+  fontWeight: 600,
+  color: "#8a7658",
+  textTransform: "uppercase",
+  letterSpacing: 0.6,
+};
+
+const tdStyle: React.CSSProperties = {
+  padding: "16px",
+  verticalAlign: "middle",
+};
