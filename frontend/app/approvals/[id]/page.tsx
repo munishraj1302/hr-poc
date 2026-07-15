@@ -22,10 +22,10 @@ function initials(name: string) {
 // IMPORTANT: we match ONLY against task_name, never against t.options.
 // A task's own sub-options (e.g. an "Asset Allocation" task offering a
 // "Security Token" checkbox) must not change which team owns the task —
-// otherwise an IT task gets mis-filed under Security just because one of
-// its options happens to contain the word "security". Ownership of a task
-// is a property of the task itself, not of what the reviewer can pick
-// inside it.
+// otherwise an IT task gets mis-filed under a different team just because
+// one of its options happens to contain an unrelated keyword. Ownership of
+// a task is a property of the task itself, not of what the reviewer can
+// pick inside it.
 const HR_KEYWORDS = [
   "aadhaar",
   "pan card",
@@ -37,6 +37,18 @@ const HR_KEYWORDS = [
   "relieving",
   "hr portal",
   "hr document",
+  // security/compliance-adjacent tasks route to HR since the dedicated
+  // Security stage was removed — HR already owns documentation/compliance.
+  "background check",
+  "security clearance",
+  "nda",
+  "confidentiality",
+  "access badge",
+  "security training",
+  "police verification",
+  "reference check",
+  "security token",
+  "clearance",
 ];
 const IT_KEYWORDS = [
   "laptop",
@@ -76,18 +88,6 @@ const IT_KEYWORDS = [
   "account creation",
   "user id",
 ];
-const SECURITY_KEYWORDS = [
-  "background check",
-  "security clearance",
-  "nda",
-  "confidentiality",
-  "access badge",
-  "security training",
-  "police verification",
-  "reference check",
-  "security token",
-  "clearance",
-];
 const DELIVERY_KEYWORDS = [
   "team assignment",
   "onboarding track",
@@ -98,7 +98,7 @@ const DELIVERY_KEYWORDS = [
   "project allocation",
 ];
 
-type StageKey = "hr" | "it" | "security" | "delivery";
+type StageKey = "hr" | "it" | "delivery";
 type WorkflowType = "onboarding" | "offboarding";
 
 // Checks a task name against a keyword list.
@@ -111,9 +111,14 @@ function classifyStage(t: any): StageKey {
   //    your API sends it, since keyword guessing is inherently fragile.
   const explicit = (t.stage || t.category || "").toLowerCase();
   if (explicit) {
-    if (explicit.includes("hr") || explicit.includes("document")) return "hr";
+    if (
+      explicit.includes("hr") ||
+      explicit.includes("document") ||
+      explicit.includes("security") ||
+      explicit.includes("clearance")
+    )
+      return "hr";
     if (explicit.includes("it") || explicit.includes("provision")) return "it";
-    if (explicit.includes("security") || explicit.includes("clearance")) return "security";
     if (explicit.includes("manager") || explicit.includes("team") || explicit.includes("delivery"))
       return "delivery";
   }
@@ -122,7 +127,6 @@ function classifyStage(t: any): StageKey {
   //    t.options here — see comment above IT_KEYWORDS.
   const name = (t.task_name || "").toLowerCase();
 
-  if (matchesAny(name, SECURITY_KEYWORDS)) return "security";
   if (matchesAny(name, DELIVERY_KEYWORDS)) return "delivery";
   if (matchesAny(name, IT_KEYWORDS)) return "it";
   if (matchesAny(name, HR_KEYWORDS)) return "hr";
@@ -138,19 +142,18 @@ function classifyStage(t: any): StageKey {
 const STAGES: { key: StageKey; eyebrow: string; title: string }[] = [
   { key: "hr", eyebrow: "STAGE 1 · DOCUMENTATION", title: "HR Verification" },
   { key: "it", eyebrow: "STAGE 2 · PROVISIONING", title: "IT Provisioning" },
-  { key: "security", eyebrow: "STAGE 3 · CLEARANCE", title: "Security" },
-  { key: "delivery", eyebrow: "STAGE 4 · TEAM ASSIGNMENT", title: "Delivery Team" },
+  { key: "delivery", eyebrow: "STAGE 3 · TEAM ASSIGNMENT", title: "Delivery Team" },
 ];
 
 // --- Role-based access -----------------------------------------------------
-// Maps a logged-in user's role to the single stage they're allowed to view /
-// act on. Everything else renders locked/read-only for them. "admin" (or any
-// role not listed) falls back to full access — adjust ADMIN_ROLES if you have
-// a different naming convention for a super-user role.
+// Maps a logged-in user's role to the single stage they're allowed to
+// EDIT. Every other stage is still fully visible to them — just read-only.
+// "admin" (or any role not listed) falls back to full edit access —
+// adjust ADMIN_ROLES if you have a different naming convention for a
+// super-user role.
 const ROLE_STAGE_MAP: Record<string, StageKey> = {
   hr: "hr",
   it: "it",
-  security: "security",
   manager: "delivery",
   delivery: "delivery",
   "delivery team": "delivery",
@@ -164,13 +167,18 @@ function stageForRole(role?: string | null): StageKey | "all" | null {
   return ROLE_STAGE_MAP[r] ?? null;
 }
 
+// A task card is visually "checked"/complete once it has been decided —
+// approved OR rejected both count as Completed. The red "needs attention"
+// styling is driven purely by the flag (expired/missing), not by the
+// rejected decision itself, so a reviewer's reject action always reads as
+// a completed action rather than a failure state.
 function taskCardStyle(t: any) {
   const status = (t.status || "").toLowerCase();
-  if (status === "approved" || status === "verified") {
-    return { bg: "bg-green-50 border-green-100", checked: true };
-  }
-  if (t.flag === "expired" || t.flag === "missing" || status === "rejected") {
+  if (t.flag === "expired" || t.flag === "missing") {
     return { bg: "bg-red-50 border-red-100", checked: false };
+  }
+  if (status === "approved" || status === "verified" || status === "rejected") {
+    return { bg: "bg-green-50 border-green-100", checked: true };
   }
   return { bg: "bg-white border-gray-100", checked: false };
 }
@@ -178,7 +186,7 @@ function taskCardStyle(t: any) {
 // --- Individual task row ---------------------------------------------------
 // Carries the editable-selection + approve/reject-per-task logic, restyled
 // with the stepper design's tailwind visual language so it drops into either
-// the HR checklist card or the IT/Security/Delivery AI-recommendation panel.
+// the HR checklist card or the IT/Delivery AI-recommendation panel.
 function TaskRow({
   employeeId,
   task,
@@ -259,6 +267,9 @@ function TaskRow({
               )}
               {task.category === "compliance" && (
                 <span className="text-[11px] font-semibold text-indigo-600">compliance</span>
+              )}
+              {checked && (
+                <span className="text-[11px] font-semibold text-green-600">Completed</span>
               )}
             </div>
             {task.flag && (
@@ -358,9 +369,11 @@ export default function EmployeeApprovalPage() {
   const [decidingStage, setDecidingStage] = useState<StageKey | null>(null);
   const [activeWorkflow, setActiveWorkflow] = useState<WorkflowType>("onboarding");
 
-  // Which single stage (if any) this logged-in role is permitted to act on.
-  // "all" = full access (admin-type role). null = unrecognized role, treat as
-  // fully locked everywhere to be safe.
+  // Which single stage (if any) this logged-in role is permitted to EDIT.
+  // "all" = full edit access (admin-type role). null = unrecognized role,
+  // treat as fully read-only everywhere to be safe. Note: this only ever
+  // gates editing — every stage's data is still fetched and displayed to
+  // every role (see load() below).
   const myStage = useMemo(() => stageForRole(role), [role]);
 
   function isStageLockedForRole(key: StageKey) {
@@ -371,9 +384,25 @@ export default function EmployeeApprovalPage() {
   async function load() {
     if (!role) return;
     setLoading(true);
-    const data = await api.approvalsForRole(role);
-    setItems(data);
-    setLoading(false);
+    try {
+      let data: any[] = [];
+      if (typeof (api as any).approvalsForEmployee === "function") {
+        // PREFERRED, if/when your backend adds it: a per-employee endpoint
+        // that isn't scoped to the caller's own role queue, so every stage's
+        // real tasks come back regardless of who's logged in.
+        data = await (api as any).approvalsForEmployee(employeeId);
+      } else {
+        // Fallback: the logged-in role's own queue. Works today. Its known
+        // limit: a stage the current role doesn't own may show up empty
+        // instead of its real state, if your backend only ever sends that
+        // role its own tasks. Add api.approvalsForEmployee(employeeId) on
+        // the backend to remove this limitation.
+        data = await api.approvalsForRole(role);
+      }
+      setItems(data);
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -409,27 +438,33 @@ export default function EmployeeApprovalPage() {
   }, [employeeItems, activeWorkflow]);
 
   const tasksByStage = useMemo(() => {
-    const grouped: Record<StageKey, any[]> = { hr: [], it: [], security: [], delivery: [] };
+    const grouped: Record<StageKey, any[]> = { hr: [], it: [], delivery: [] };
     allTasks.forEach((t: any) => grouped[classifyStage(t)].push(t));
     return grouped;
   }, [allTasks]);
 
+  // --- Stage progression -----------------------------------------------
+  // Order of truth: HR → IT → Delivery. A stage can only be "In Progress"
+  // once every EARLIER stage is fully "Completed" — this is checked FIRST,
+  // even for a stage with zero tasks, so an empty stage never appears
+  // Completed before it's actually its turn.
   function stageStatus(key: StageKey): "completed" | "pending" | "locked" {
+    const stageIndex = STAGES.findIndex((s) => s.key === key);
+    const priorStagesDone = STAGES.slice(0, stageIndex).every(
+      (s) => stageStatus(s.key) === "completed"
+    );
+    if (!priorStagesDone) return "locked";
+
     const tasks = tasksByStage[key];
-    if (tasks.length === 0) return "completed"; // nothing required at this stage
+    if (tasks.length === 0) return "completed"; // nothing required, and it's this stage's turn
+
     // A stage is Completed once every task in it has been decided — approved
     // OR rejected. Tracking only advances after the owning role has actually
     // acted (task-level editing is already restricted to that role), so this
     // naturally satisfies "status changes only after the logged-in role
     // completes its action".
     const allDecided = tasks.every((t) => t.status === "approved" || t.status === "rejected");
-    if (allDecided) return "completed";
-
-    const stageIndex = STAGES.findIndex((s) => s.key === key);
-    const priorStagesDone = STAGES.slice(0, stageIndex).every(
-      (s) => stageStatus(s.key) === "completed"
-    );
-    return priorStagesDone ? "pending" : "locked";
+    return allDecided ? "completed" : "pending";
   }
 
   async function handleApproveStage(key: StageKey) {
@@ -459,8 +494,8 @@ export default function EmployeeApprovalPage() {
             </p>
             <h1 className="mt-2 text-4xl font-bold text-[#14213D]">Approval Dashboard</h1>
             <p className="mt-2 text-gray-500">
-              Review, edit AI selections and approve or reject each task across HR, IT, Security and
-              Delivery Team.
+              Review, edit AI selections and approve or reject each task across HR, IT and Delivery
+              Team.
             </p>
           </div>
           <div className="flex items-center gap-3 shrink-0">
@@ -570,7 +605,7 @@ export default function EmployeeApprovalPage() {
                               ? "Completed"
                               : status === "pending"
                               ? "In progress"
-                              : `Waiting on ${STAGES[idx - 1]?.title.split(" ")[0] || "—"}`}
+                              : `Waiting for ${STAGES[idx - 1]?.title.split(" ")[0] || "—"}`}
                           </div>
                         </div>
                       </div>
@@ -588,53 +623,50 @@ export default function EmployeeApprovalPage() {
             </div>
 
             {/* Stage cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
               {STAGES.map((s) => {
                 const status = stageStatus(s.key);
                 const tasks = tasksByStage[s.key];
-                const locked = status === "locked";
-                const roleLocked = isStageLockedForRole(s.key);
+                const locked = status === "locked"; // TRUE progress lock: a prior stage isn't done yet
+                const roleLocked = isStageLockedForRole(s.key); // PERMISSION lock: this login can't edit this stage
                 const pendingCount = tasks.filter((t) => t.status === "pending").length;
-                // For the badge, "locked" means this viewer can't see/act on the
-                // real status — either because a prior stage isn't done yet, or
-                // because their role doesn't own this stage. Either way, show
-                // "Locked" rather than leaking Pending/Approved to a role that
-                // has no visibility into that stage anyway.
-                const displayAsLocked = locked || roleLocked;
 
                 return (
                   <div
                     key={s.key}
-                    className={`relative rounded-2xl border border-gray-200 bg-white shadow-sm p-5 flex flex-col ${
-                      roleLocked ? "opacity-70" : ""
-                    }`}
+                    className="relative rounded-2xl border border-gray-200 bg-white shadow-sm p-5 flex flex-col"
                   >
-                    {roleLocked && (
-                      <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded-2xl bg-white/70 backdrop-blur-[1px]">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gray-100 text-gray-400">
-                          🔒
-                        </div>
-                        <p className="text-xs font-semibold text-gray-500 px-4 text-center">
-                          Restricted — visible to {s.title} reviewers only
-                        </p>
-                      </div>
-                    )}
-
                     <p className="text-xs font-semibold tracking-wide text-[#D9A653] uppercase">
                       {s.eyebrow}
                     </p>
                     <div className="flex items-center justify-between mt-1 mb-4">
-                      <h3 className="text-xl font-bold text-[#14213D]">{s.title}</h3>
+                      <h3 className="text-xl font-bold text-[#14213D] flex items-center gap-2">
+                        {s.title}
+                        {/* Stage stays fully visible even when this role can't edit it —
+                            just a small "View only" tag instead of hiding the content. */}
+                        {roleLocked && (
+                          <span
+                            title={`Read-only — only ${s.title} reviewers can edit this stage`}
+                            className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold text-gray-500"
+                          >
+                            🔒 View only
+                          </span>
+                        )}
+                      </h3>
+                      {/* Status pill reflects the REAL stage progress — Locked / Pending /
+                          Completed — the same for every role. Editability is shown
+                          separately via the "View only" tag above, never by relabeling
+                          or hiding the real status here. */}
                       <span
                         className={`rounded-full px-3 py-1 text-xs font-semibold whitespace-nowrap ${
-                          displayAsLocked
+                          locked
                             ? "bg-gray-100 text-gray-500"
                             : status === "completed"
                             ? "bg-green-100 text-green-700"
                             : "bg-amber-100 text-amber-700"
                         }`}
                       >
-                        {displayAsLocked ? "Locked" : status === "completed" ? "Approved" : "Pending"}
+                        {locked ? "Locked" : status === "completed" ? "Completed" : "In Progress"}
                       </span>
                     </div>
 
@@ -670,16 +702,12 @@ export default function EmployeeApprovalPage() {
                       </div>
                     )}
 
-                    {/* IT / Security / Delivery Team: AI recommendation panel, editable selections */}
+                    {/* IT / Delivery Team: AI recommendation panel, editable selections */}
                     {s.key !== "hr" && (
                       <div className="rounded-xl bg-[#F3F1FB] border border-[#E4DFF7] p-4">
                         <div className="text-xs font-semibold text-[#6D4FC7] uppercase tracking-wide mb-3">
                           ✦{" "}
-                          {s.key === "it"
-                            ? "AI Recommended Access"
-                            : s.key === "security"
-                            ? "AI Recommended Clearance"
-                            : "AI Suggested Assignment"}
+                          {s.key === "it" ? "AI Recommended Access" : "AI Suggested Assignment"}
                         </div>
                         {tasks.length === 0 && (
                           <p className="text-sm text-gray-400">No recommendations yet.</p>
