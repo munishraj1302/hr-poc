@@ -12,7 +12,7 @@ from both task tables, matching what the Compliance Dashboard shows.
 import datetime
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, exists, distinct
 from app.database import get_db
 from app.models import (
     Employee, RiskAssessment,
@@ -52,6 +52,26 @@ def get_dashboard_summary(db: Session = Depends(get_db)):
     pending_onboarding_tasks = db.query(OnboardingTask).filter(OnboardingTask.status == "pending").count()
     pending_offboarding_tasks = db.query(OffboardingTask).filter(OffboardingTask.status == "pending").count()
     pending_approvals = pending_onboarding_tasks + pending_offboarding_tasks
+
+    pending_hr_approvals = (
+    db.query(distinct(OnboardingTask.employee_id))
+    .filter(
+        OnboardingTask.status == "pending",
+        OnboardingTask.track == "HR"
+    )
+    .count()
+    )
+
+    pending_it_approvals = (
+    db.query(distinct(OnboardingTask.employee_id))
+    .filter(
+        OnboardingTask.status == "pending",
+        OnboardingTask.track == "IT"
+    )
+    .count()
+    )
+
+    pending_onboarding_tasks_hr_it = pending_hr_approvals + pending_it_approvals
 
     high_risk_employees = db.query(RiskAssessment).filter(RiskAssessment.risk_level == "High").count()
 
@@ -96,6 +116,7 @@ def get_dashboard_summary(db: Session = Depends(get_db)):
         "offboarded_today": offboarded_today,
         "pending_onboarding": pending_onboarding,
         "pending_offboarding": pending_offboarding,
+        "pending_onboarding_hr_it": pending_onboarding_tasks_hr_it,
         "pending_approvals": pending_approvals,
         "high_risk_employees": high_risk_employees,
         "compliance_completion_pct": compliance_completion_pct,
